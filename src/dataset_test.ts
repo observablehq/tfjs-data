@@ -377,3 +377,84 @@ describeWithFlags('Dataset', tf.test_util.CPU_ENVS, () => {
     }
   });
 });
+
+function sleep(): Promise<void> {
+  return new Promise(resolve => {
+    setTimeout(resolve, Math.random() * 100);
+  });
+}
+
+const N = 5;
+
+function naive() {
+  let i = -1;
+  return async () => {
+    if (++i < N) {
+      await sleep();
+      return {value: i, done: false};
+    }
+    return {value: null, done: true};
+  };
+}
+
+function isolatesState() {
+  let i = -1;
+  return async () => {
+    if (++i < N) {
+      const state = {i};
+      await sleep();
+      return {value: state.i, done: false};
+    }
+    return {value: null, done: true};
+  };
+}
+
+function serial() {
+  let i = -1;
+  let lastRead: Promise<void>;
+
+  return async () => {
+    const read = lastRead;
+    let outsideResolve: () => void;
+    lastRead = new Promise(resolve => outsideResolve = resolve);
+    if (read) {
+      await read;
+    }
+    if (++i < N) {
+      await sleep();
+      outsideResolve();
+      return {value: i, done: false};
+    }
+    return {value: null, done: true};
+  };
+}
+
+describe('Parallel fetch', () => {
+  async function parallelRead(it: LazyIterator<{}>) {
+    const parallelNextCalls = [];
+    for (let j = 0; j < N; j++) {
+      parallelNextCalls.push(it.next());
+    }
+    const result = await Promise.all(parallelNextCalls);
+    result.forEach(r => console.log(r.value));
+    console.log('done', (await it.next()).done);
+  }
+
+  // tslint:disable-next-line:ban
+  fit('naive iterator', async () => {
+    const it = iteratorFromFunction(naive());
+    await parallelRead(it);
+  });
+
+  // tslint:disable-next-line:ban
+  fit('isolates state', async () => {
+    const it = iteratorFromFunction(isolatesState());
+    await parallelRead(it);
+  });
+
+  // tslint:disable-next-line:ban
+  fit('serial', async () => {
+    const it = iteratorFromFunction(serial());
+    await parallelRead(it);
+  });
+});
